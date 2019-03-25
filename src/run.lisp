@@ -33,6 +33,15 @@
 ;;;; The functions RUN!, !, !! and !!! are convenient wrappers around
 ;;;; RUN and EXPLAIN.
 
+;;;; If checks are run in a loop (eg. testing the same code with
+;;;; different inputs), you might want to bind *ITERATION-INFO*
+;;;; to some explanatory text; this will get printed with the
+;;;; test name. As long as the value stays the same (per EQ),
+;;;; it won't be repeated though.
+;;;;     (loop for v in '(1 1 2)
+;;;;           do (let ((5am:*iteration-info* v))
+;;;;                (5am:is (= 1 v))))
+
 (deftype on-problem-action ()
   '(member :debug :backtrace nil))
 
@@ -70,6 +79,13 @@ OBSOLETE: superseded by *ON-FAILURE*")
 (defun import-testing-symbols (package-designator)
   (import '(5am::is 5am::is-true 5am::is-false 5am::signals 5am::finishes)
           package-designator))
+
+(defvar *iteration-info* nil
+  "Some information about the current iteration;
+  this gets prepended in (the first) error report.")
+
+(defvar *used-iteration-info* nil
+  "Stores already used *ITERATION-INFO*, to not return it multiple times.")
 
 (defparameter *run-queue* '()
   "List of test waiting to be run.")
@@ -177,7 +193,9 @@ run."))
                              :reason reason
                              :condition e))
                (run-it ()
-                 (let ((result-list '()))
+                 (let ((result-list '())
+                       (*iteration-info* nil)
+                       (*used-iteration-info* nil))
                    (declare (special result-list))
                    (handler-bind ((check-failure (lambda (e)
                                                    (declare (ignore e))

@@ -34,7 +34,8 @@
 (defclass test-result ()
   ((reason :accessor reason :initarg :reason :initform "no reason given")
    (test-case :accessor test-case :initarg :test-case)
-   (test-expr :accessor test-expr :initarg :test-expr))
+   (test-expr :accessor test-expr :initarg :test-expr)
+   (test-iter :accessor test-iter :initarg :test-iter :initform nil))
   (:documentation "All checking macros will generate an object of
  type TEST-RESULT."))
 
@@ -56,13 +57,22 @@
                       (test-expr c)
                       (reason c)))))
 
+(defun iteration-info ()
+  (if (eq *iteration-info* *used-iteration-info*)
+    nil ;; Only return that info once
+    (setf *used-iteration-info*
+          *iteration-info*)))
+
 (defun process-failure (test-expr &optional reason-format &rest format-args)
   (let ((reason (and reason-format
-                     (apply #'format nil reason-format format-args))))
+                     (apply #'format nil reason-format format-args)))
+        (iter-info (iteration-info)))
     (with-simple-restart (ignore-failure "Continue the test run.")
       (error 'check-failure :test-expr test-expr
+                            :test-iter iter-info
                             :reason reason))
     (add-result 'test-failure :test-expr test-expr
+                              :test-iter iter-info
                               :reason reason)))
 
 (defclass test-failure (test-result)

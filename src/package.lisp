@@ -77,6 +77,7 @@
    #:*debug-on-failure*
    #:*on-error*
    #:*on-failure*
+   #:*iteration-info*
    #:*verbose-failures*
    #:*print-names*
    #:results-status))
