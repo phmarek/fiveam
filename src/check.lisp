@@ -35,7 +35,7 @@
   ((reason :accessor reason :initarg :reason :initform "no reason given")
    (test-case :accessor test-case :initarg :test-case)
    (test-expr :accessor test-expr :initarg :test-expr)
-   (test-iter :accessor test-iter :initarg :test-iter))
+   (test-iter :accessor test-iter :initarg :test-iter :initform nil))
   (:documentation "All checking macros will generate an object of
  type TEST-RESULT."))
 
