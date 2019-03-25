@@ -42,9 +42,10 @@
         (output "Failure Details:~%")
         (dolist (f (reverse failed))
           (output "--------------------------------~%")
-          (output "~A ~@{[~A]~}: ~%"
+          (output "~A ~{[~A]~}~@[ (~A)~]: ~%"
                   (name (test-case f))
-                  (description (test-case f)))
+                  (alexandria:ensure-list (description (test-case f)))
+                  (test-iter f))
           (output "     ~A.~%" (reason f))
           (when (for-all-test-failed-p f)
             (output "Results collected with failure data:~%")
