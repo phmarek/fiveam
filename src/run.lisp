@@ -16,7 +16,7 @@
 ;;;; exceptional situations which can occur:
 
 ;;;; - An exception is signaled while running the test. If the
-;;;;   variable *debug-on-error* is T than FiveAM will enter the
+;;;;   variable *on-error* is :DEBUG than FiveAM will enter the
 ;;;;   debugger, otherwise a test failure (of type
 ;;;;   unexpected-test-failure) is returned. When entering the
 ;;;;   debugger two restarts are made available, one simply reruns the
@@ -33,14 +33,39 @@
 ;;;; The functions RUN!, !, !! and !!! are convenient wrappers around
 ;;;; RUN and EXPLAIN.
 
-(defparameter *debug-on-error* nil
-  "T if we should drop into a debugger on error, NIL otherwise.")
+(deftype on-problem-action ()
+  '(member :debug :backtrace nil))
 
-(defparameter *debug-on-failure* nil
-  "T if we should drop into a debugger on a failing check, NIL otherwise.")
+(declaim (type on-problem-action *on-error* *on-failure*))
+
+(defvar *on-error* nil
+  "The action to perform on error:
+- :DEBUG if we should drop into the debugger
+- :BACKTRACE to print a backtrace
+- NIL to simply continue")
+
+(defvar *on-failure* nil
+  "The action to perform on check failure:
+- :DEBUG if we should drop into the debugger
+- :BACKTRACE to print a backtrace
+- NIL to simply continue")
+
+(defvar *debug-on-error* nil
+  "T if we should drop into the debugger on error, NIL otherwise.
+OBSOLETE: superseded by *ON-ERROR*")
+
+(defvar *debug-on-failure* nil
+  "T if we should drop into the debugger on a failing check, NIL otherwise.
+OBSOLETE: superseded by *ON-FAILURE*")
 
 (defparameter *print-names* t
   "T if we should print test running progress, NIL otherwise.")
+
+(defparameter *test-dribble-indent* (make-array 0
+                                        :element-type 'character
+                                        :fill-pointer 0
+                                        :adjustable t)
+  "Used to indent tests and test suites in their parent suite")
 
 (defun import-testing-symbols (package-designator)
   (import '(5am::is 5am::is-true 5am::is-false 5am::signals 5am::finishes)
@@ -114,18 +139,23 @@ run."))
           (not (satisfies-depends-p #'notany))
           (:before (every #'(lambda (dep)
                               (let ((status (status (get-test dep))))
-                                (eql :unknown status)))
+                                (if (eql :unknown status)
+                                    (run-resolving-dependencies (get-test dep))
+                                    status)))
                           (cdr depends-on)))))))
 
 (defun results-status (result-list)
   "Given a list of test results (generated while running a test)
-  return true if all of the results are of type TEST-PASSED,
-  fail otherwise.
-  Returns a second value, which is the set of failed tests."
+  return true if no results are of type TEST-FAILURE.  Returns second
+  and third values, which are the set of failed tests and skipped
+  tests respectively."
   (let ((failed-tests
-          (remove-if #'test-passed-p result-list)))
+          (remove-if-not #'test-failure-p result-list))
+        (skipped-tests
+          (remove-if-not #'test-skipped-p result-list)))
     (values (null failed-tests)
-            failed-tests)))
+            failed-tests
+            skipped-tests)))
 
 (defun return-result-list (test-lambda)
   "Run the test function TEST-LAMBDA and return a list of all
@@ -151,23 +181,34 @@ run."))
                    (declare (special result-list))
                    (handler-bind ((check-failure (lambda (e)
                                                    (declare (ignore e))
-                                                   (unless *debug-on-failure*
-                                                     (invoke-restart
-                                                      (find-restart 'ignore-failure)))))
+                                                   (cond
+                                                     ((eql *on-failure* :debug)
+                                                      nil)
+                                                     (t
+                                                      (when (eql *on-failure* :backtrace)
+                                                        (trivial-backtrace:print-backtrace-to-stream
+                                                         *test-dribble*))
+                                                      (invoke-restart
+                                                       (find-restart 'ignore-failure))))))
                                   (error (lambda (e)
-                                           (unless (or *debug-on-error*
+                                           (unless (or (eql *on-error* :debug)
                                                        (typep e 'check-failure))
+                                             (when (eql *on-error* :backtrace)
+                                               (trivial-backtrace:print-backtrace-to-stream
+                                                *test-dribble*))
                                              (abort-test e)
                                              (return-from run-it result-list)))))
                      (restart-case
                          (handler-case
-                         (let ((*readtable* (copy-readtable))
-                               (*package* (runtime-package test)))
-                           (if (collect-profiling-info test)
-                               ;; Timing info doesn't get collected ATM, we need a portable library
-                               ;; (setf (profiling-info test) (collect-timing (test-lambda test)))
-                               (funcall (test-lambda test))
-                               (funcall (test-lambda test))))
+                             (let ((*readtable* (copy-readtable))
+                                   (*package* (runtime-package test)))
+                               (when *print-names*
+                                   (format *test-dribble* "~%~ARunning test ~A " *test-dribble-indent* (name test)))
+                               (if (collect-profiling-info test)
+                                   ;; Timing info doesn't get collected ATM, we need a portable library
+                                   ;; (setf (profiling-info test) (collect-timing (test-lambda test)))
+                                   (funcall (test-lambda test))
+                                   (funcall (test-lambda test))))
                            (storage-condition (e)
                              ;; heap-exhausted/constrol-stack-exhausted
                              ;; handler-case unwinds the stack (unlike handler-bind)
@@ -181,7 +222,7 @@ run."))
                          :report (lambda (stream)
                                    (format stream "~@<Signal an exceptional test failure and abort the test ~S.~@:>" test))
                          (abort-test (make-instance 'test-failure :test-case test
-                                                    :reason "Failure restart."))))
+                                                                  :reason "Failure restart."))))
                      result-list))))
         (let ((results (run-it)))
           (setf (status test) (results-status results)
@@ -193,8 +234,6 @@ run."))
   !!, !!!"))
 
 (defmethod %run ((test test-case))
-  (when *print-names*
-    (format *test-dribble* "~% Running test ~A " (name test)))
   (run-resolving-dependencies test))
 
 (defmethod %run ((tests list))
@@ -202,12 +241,13 @@ run."))
 
 (defmethod %run ((suite test-suite))
   (when *print-names*
-    (format *test-dribble* "~%Running test suite ~A" (name suite)))
+    (format *test-dribble* "~%~ARunning test suite ~A" *test-dribble-indent* (name suite)))
   (let ((suite-results '()))
     (flet ((run-tests ()
              (loop
                 for test being the hash-values of (tests suite)
                 do (%run test))))
+      (vector-push-extend #\space *test-dribble-indent*)
       (unwind-protect
            (bind-run-state ((result-list '()))
              (unwind-protect
@@ -218,6 +258,7 @@ run."))
                       (run-tests)))
              (setf suite-results result-list
                    (status suite) (every #'test-passed-p suite-results)))
+        (vector-pop *test-dribble-indent*)
         (with-run-state (result-list)
           (setf result-list (nconc result-list suite-results)))))))
 
@@ -247,8 +288,8 @@ Return a boolean indicating whether no tests failed."
 
 (defun debug! (&optional (test-spec *suite*))
   "Calls (run! test-spec) but enters the debugger if any kind of error happens."
-  (let ((*debug-on-error* t)
-        (*debug-on-failure* t))
+  (let ((*on-error* :debug)
+        (*on-failure* :debug))
     (run! test-spec)))
 
 (defun run (test-spec &key ((:print-names *print-names*) *print-names*))
@@ -266,7 +307,19 @@ performed by the !, !! and !!! functions."
                  result-list))
          *!!* *!*
          *!!!* *!!*)
-  (funcall *!*))
+  (let ((*on-error*
+          (or *on-error* (cond
+                           (*debug-on-error*
+                            (format *test-dribble* "*DEBUG-ON-ERROR* is obsolete. Use *ON-ERROR*.")
+                            :debug)
+                           (t nil))))
+        (*on-failure*
+          (or *on-failure* (cond
+                           (*debug-on-failure*
+                            (format *test-dribble* "*DEBUG-ON-FAILURE* is obsolete. Use *ON-FAILURE*.")
+                            :debug)
+                           (t nil)))))
+    (funcall *!*)))
 
 (defun ! ()
   "Rerun the most recently run test and explain the results."
@@ -280,18 +333,26 @@ performed by the !, !! and !!! functions."
   "Rerun the third most recently run test and explain the results."
   (explain! (funcall *!!!*)))
 
-(defun run-all-tests ()
-  "Runs all defined test suites, T if all tests passed and NIL otherwise."
-  (loop :for suite :in (cons 'NIL (sort (copy-list *toplevel-suites*) #'string<=))
+(defun run-all-tests (&key (summary :end))
+  "Runs all defined test suites, T if all tests passed and NIL otherwise.
+SUMMARY can be :END to print a summary at the end, :SUITE to print it
+after each suite or NIL to skip explanations."
+  (check-type summary (member nil :suite :end))
+  (loop :for suite :in (cons 'nil (sort (copy-list *toplevel-suites*) #'string<=))
         :for results := (if (suite-emptyp suite) nil (run suite))
         :when (consp results)
           :collect results :into all-results
         :do (cond
+              ((not (eql summary :suite))
+               nil)
               (results
                (explain! results))
               (suite
                (format *test-dribble* "Suite ~A is empty~%" suite)))
-        :finally (return (every #'results-status all-results))))
+        :finally (progn
+                   (when (eql summary :end)
+                     (explain! (alexandria:flatten all-results)))
+                   (return (every #'results-status all-results)))))
 
 ;; Copyright (c) 2002-2003, Edward Marco Baringer
 ;; All rights reserved.

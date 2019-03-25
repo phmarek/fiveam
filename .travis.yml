@@ -13,6 +13,7 @@ env:
 
 matrix:
   allow_failures:
+    - env: LISP=allegro
     - env: LISP=cmucl
 
 notifications:
@@ -28,7 +29,7 @@ notifications:
     skip_join: true
 
 install:
-  - curl -L https://github.com/sionescu/cl-travis/raw/master/install.sh | sh
+  - curl -L https://raw.githubusercontent.com/sionescu/cl-travis/master/install.sh | sh
   - cl -e "(cl:in-package :cl-user)
            (dolist (p '(:alexandria))
              (ql:quickload p :verbose t))"
@@ -39,3 +40,5 @@ script:
            (uiop:quit (if (some (lambda (x) (typep x '5am::test-failure))
                                 (5am:run :it.bese.fiveam))
                           1 0))"
+
+sudo: required

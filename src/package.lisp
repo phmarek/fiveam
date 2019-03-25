@@ -26,16 +26,16 @@
    ;; creating tests and test-suites
    #:make-suite
    #:def-suite
+   #:def-suite*
    #:in-suite
    #:in-suite*
-   #:make-test
    #:test
    #:def-test
    #:get-test
    #:rem-test
    #:test-names
+   #:*default-test-compilation-time*
    ;; fixtures
-   #:make-fixture
    #:def-fixture
    #:with-fixture
    #:get-fixture
@@ -52,6 +52,8 @@
    #:fail
    #:*test-dribble*
    #:for-all
+   #:*num-trials*
+   #:*max-trials*
    #:gen-integer
    #:gen-float
    #:gen-character
@@ -73,6 +75,8 @@
    #:*run-test-when-defined*
    #:*debug-on-error*
    #:*debug-on-failure*
+   #:*on-error*
+   #:*on-failure*
    #:*verbose-failures*
    #:*print-names*
    #:results-status))
